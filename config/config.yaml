@@ -1,0 +1,90 @@
+spark:
+  master: "local[2]"
+  executor_memory: "2g"
+  driver_memory: "2g"
+  shuffle_partitions: 4
+
+ray:
+  num_cpus: 2
+
+paths:
+  raw: "data/raw"
+  bronze: "lakehouse/bronze"
+  silver: "lakehouse/silver"
+  gold: "lakehouse/gold"
+  tmp: "data/tmp"
+  bench_formats: "data/bench_formats"
+  benchmark_results: "data/benchmark_results.json"
+
+data_gen:
+  seed: 42
+  n_rows: 5_000_000
+  chunk_size: 1_000_000
+  n_users: 100_000
+  n_products: 10_000
+  regions:
+    - north
+    - south
+    - east
+    - west
+    - central
+  event_types:
+    - purchase
+    - view
+    - add_to_cart
+    - remove_from_cart
+    - checkout
+  product_categories:
+    - electronics
+    - clothing
+    - food
+    - sports
+    - home
+    - beauty
+  events:
+    start_date: "2024-01-01"
+    end_date: "2024-12-31"
+    price_min: 1.0
+    price_max: 500.0
+    quantity_min: 1
+    quantity_max: 10
+  users:
+    signup_start: "2020-01-01"
+    age_min: 18
+    age_max: 75
+  products:
+    price_min: 5.0
+    price_max: 1000.0
+    weight_min: 0.1
+    weight_max: 20.0
+
+simulation:
+  n_steps: 252
+  n_products: 500
+  seed: 42
+  price_min: 10.0
+  price_max: 500.0
+
+gold:
+  top_products_limit: 10
+  rolling_window_days: 7
+
+silver:
+  late_arriving_limit: 1_000
+  late_discount_multiplier: 0.9
+  late_discount_value: 0.10
+
+spark_jobs:
+  partition_counts:
+    - 2
+    - 4
+    - 8
+
+benchmarks:
+  formats:
+    - parquet
+    - orc
+  filter_region: "north"
+
+model_scoring:
+  sample_size: 10_000
