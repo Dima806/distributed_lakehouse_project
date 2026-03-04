@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest tests/test_data_gen.py -v --tb=no -q)"
+    ]
+  }
+}

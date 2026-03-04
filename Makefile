@@ -2,10 +2,14 @@
 
 SDKMAN_INIT := /usr/local/sdkman/bin/sdkman-init.sh
 JAVA_17_HOME := /usr/local/sdkman/candidates/java/17.0.18-ms
-export JAVA_HOME := $(JAVA_17_HOME)
+# Allow CI (setup-java) to override JAVA_HOME; fall back to sdkman on Codespaces
+JAVA_HOME ?= $(JAVA_17_HOME)
+export JAVA_HOME
 
 install:
-	bash -c 'source $(SDKMAN_INIT) && sdk install java 17.0.18-ms || true'
+	@if [ -f "$(SDKMAN_INIT)" ]; then \
+		bash -c 'source $(SDKMAN_INIT) && sdk install java 17.0.18-ms || true'; \
+	fi
 	uv sync
 	uv tool install prek && prek install
 

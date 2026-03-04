@@ -18,7 +18,7 @@ paths:
 
 data_gen:
   seed: 42
-  n_rows: 5_000_000
+  n_rows: 2_000_000
   chunk_size: 1_000_000
   n_users: 100_000
   n_products: 10_000

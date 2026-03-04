@@ -16,6 +16,8 @@ def spark() -> SparkSession:
         .config("spark.executor.memory", "1g")
         .config("spark.driver.memory", "1g")
         .config("spark.sql.shuffle.partitions", "2")
+        .config("spark.databricks.delta.stats.collect", "false")
+        .config("spark.databricks.delta.autoOptimize.autoCompact", "false")
         .config(
             "spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension"
         )

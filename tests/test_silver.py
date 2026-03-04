@@ -2,61 +2,107 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import pytest
 from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    DoubleType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
+
+_BRONZE_SCHEMA = StructType(
+    [
+        StructField("event_id", LongType(), False),
+        StructField("user_id", IntegerType(), True),
+        StructField("event_timestamp", TimestampType(), True),
+        StructField("event_type", StringType(), True),
+        StructField("product_id", IntegerType(), True),
+        StructField("price", DoubleType(), True),
+        StructField("quantity", IntegerType(), True),
+        StructField("region", StringType(), True),
+    ]
+)
+
+_N = 50  # small enough to be fast, large enough for meaningful tests
 
 
-def _make_bronze_df(spark: SparkSession, n: int = 200):
+def _make_rows(n: int = _N) -> list:
     rng = np.random.default_rng(0)
-    df_pd = pd.DataFrame(
-        {
-            "event_id": np.arange(n, dtype=np.int64),
-            "user_id": rng.integers(0, 1_000, n).astype(np.int32),
-            "event_timestamp": pd.date_range(
-                "2024-01-01", periods=n, freq="1h"
-            ),
-            "event_type": rng.choice(["purchase", "view"], n),
-            "product_id": rng.integers(0, 100, n).astype(np.int32),
-            "price": np.round(rng.uniform(1.0, 100.0, n), 2),
-            "quantity": rng.integers(1, 5, n).astype(np.int32),
-            "region": rng.choice(["north", "south"], n),
-        }
-    )
-    return spark.createDataFrame(df_pd)
+    base = datetime(2024, 1, 1)
+    user_ids = rng.integers(0, 1_000, n).tolist()
+    event_types = rng.choice(["purchase", "view"], n).tolist()
+    product_ids = rng.integers(0, 100, n).tolist()
+    prices = [round(float(p), 2) for p in rng.uniform(1.0, 100.0, n)]
+    quantities = rng.integers(1, 5, n).tolist()
+    regions = rng.choice(["north", "south"], n).tolist()
+    return [
+        (
+            int(i),
+            user_ids[i],
+            base + timedelta(hours=i),
+            event_types[i],
+            product_ids[i],
+            prices[i],
+            quantities[i],
+            regions[i],
+        )
+        for i in range(n)
+    ]
 
 
-def test_silver_write_and_read(spark: SparkSession, tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def bronze_rows() -> list:
+    """Pre-computed rows shared across all silver tests in this module."""
+    return _make_rows(_N)
+
+
+def test_silver_write_and_read(
+    spark: SparkSession, tmp_path: Path, bronze_rows: list
+) -> None:
     path = str(tmp_path / "silver" / "events")
-    _make_bronze_df(spark).write.format("delta").mode("overwrite").save(path)
+    spark.createDataFrame(bronze_rows, _BRONZE_SCHEMA).write.format(
+        "delta"
+    ).mode("overwrite").save(path)
 
     df = spark.read.format("delta").load(path)
-    assert df.count() == 200
+    assert df.count() == _N
 
 
-def test_silver_time_travel(spark: SparkSession, tmp_path: Path) -> None:
+def test_silver_time_travel(
+    spark: SparkSession, tmp_path: Path, bronze_rows: list
+) -> None:
     path = str(tmp_path / "silver" / "events")
-    bronze = _make_bronze_df(spark)
+    bronze = spark.createDataFrame(bronze_rows, _BRONZE_SCHEMA)
 
     bronze.write.format("delta").mode("overwrite").save(path)  # version 0
-    bronze.limit(50).write.format("delta").mode("append").save(
+    bronze.limit(25).write.format("delta").mode("append").save(
         path
     )  # version 1
 
     v0 = spark.read.format("delta").option("versionAsOf", 0).load(path)
     current = spark.read.format("delta").load(path)
 
-    assert v0.count() == 200
-    assert current.count() == 250
+    assert v0.count() == _N
+    assert current.count() == _N + 25
 
 
-def test_silver_schema_evolution(spark: SparkSession, tmp_path: Path) -> None:
+def test_silver_schema_evolution(
+    spark: SparkSession, tmp_path: Path, bronze_rows: list
+) -> None:
     path = str(tmp_path / "silver" / "events")
-    _make_bronze_df(spark).write.format("delta").mode("overwrite").save(path)
+    spark.createDataFrame(bronze_rows, _BRONZE_SCHEMA).write.format(
+        "delta"
+    ).mode("overwrite").save(path)
 
     df = spark.read.format("delta").load(path)
     df_evolved = df.withColumn("discount", F.lit(None).cast("double"))
@@ -68,12 +114,14 @@ def test_silver_schema_evolution(spark: SparkSession, tmp_path: Path) -> None:
     assert "discount" in {f.name for f in result.schema.fields}
 
 
-def test_silver_upsert(spark: SparkSession, tmp_path: Path) -> None:
+def test_silver_upsert(
+    spark: SparkSession, tmp_path: Path, bronze_rows: list
+) -> None:
     path = str(tmp_path / "silver" / "events")
-    bronze = _make_bronze_df(spark)
+    bronze = spark.createDataFrame(bronze_rows, _BRONZE_SCHEMA)
     bronze.write.format("delta").mode("overwrite").save(path)
 
-    late = bronze.limit(10).withColumn("price", F.col("price") * 0.5)
+    late = bronze.limit(5).withColumn("price", F.col("price") * 0.5)
     delta_table = DeltaTable.forPath(spark, path)
     (
         delta_table.alias("t")
@@ -84,29 +132,19 @@ def test_silver_upsert(spark: SparkSession, tmp_path: Path) -> None:
     )
 
     result = spark.read.format("delta").load(path)
-    assert result.count() == 200  # no new rows — all matched
+    assert result.count() == _N  # no new rows — all matched
 
 
 def test_silver_filters_invalid_rows(
-    spark: SparkSession, tmp_path: Path
+    spark: SparkSession, tmp_path: Path, bronze_rows: list
 ) -> None:
     path = str(tmp_path / "silver" / "events")
-    bronze = _make_bronze_df(spark)
+    bronze = spark.createDataFrame(bronze_rows, _BRONZE_SCHEMA)
 
     # Add bad rows with price=0 and quantity=0
     bad = spark.createDataFrame(
-        pd.DataFrame(
-            {
-                "event_id": [9999],
-                "user_id": [1],
-                "event_timestamp": pd.to_datetime(["2024-06-01"]),
-                "event_type": ["view"],
-                "product_id": [1],
-                "price": [0.0],
-                "quantity": [0],
-                "region": ["north"],
-            }
-        )
+        [(9999, 1, datetime(2024, 6, 1), "view", 1, 0.0, 0, "north")],
+        _BRONZE_SCHEMA,
     )
     combined = bronze.union(bad)
 
@@ -114,4 +152,4 @@ def test_silver_filters_invalid_rows(
     cleaned.write.format("delta").mode("overwrite").save(path)
 
     result = spark.read.format("delta").load(path)
-    assert result.count() == 200
+    assert result.count() == _N

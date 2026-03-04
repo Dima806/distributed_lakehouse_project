@@ -2,38 +2,67 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    DoubleType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
+
+_SILVER_SCHEMA = StructType(
+    [
+        StructField("event_id", LongType(), False),
+        StructField("user_id", IntegerType(), True),
+        StructField("event_timestamp", TimestampType(), True),
+        StructField("event_type", StringType(), True),
+        StructField("product_id", IntegerType(), True),
+        StructField("price", DoubleType(), True),
+        StructField("quantity", IntegerType(), True),
+        StructField("region", StringType(), True),
+        StructField("discount", DoubleType(), True),
+    ]
+)
 
 
 @pytest.fixture()
 def silver_delta(spark: SparkSession, tmp_path: Path) -> str:
     rng = np.random.default_rng(0)
-    n = 500
-    df_pd = pd.DataFrame(
-        {
-            "event_id": np.arange(n, dtype=np.int64),
-            "user_id": rng.integers(0, 100, n).astype(np.int32),
-            "event_timestamp": pd.date_range(
-                "2024-01-01", periods=n, freq="1h"
-            ),
-            "event_type": rng.choice(["purchase", "view", "add_to_cart"], n),
-            "product_id": rng.integers(0, 50, n).astype(np.int32),
-            "price": np.round(rng.uniform(1.0, 100.0, n), 2),
-            "quantity": rng.integers(1, 5, n).astype(np.int32),
-            "region": rng.choice(["north", "south", "east"], n),
-            "discount": np.full(n, np.nan),
-        }
-    )
+    n = 100
+    base = datetime(2024, 1, 1)
+    user_ids = rng.integers(0, 100, n).tolist()
+    event_types = rng.choice(["purchase", "view", "add_to_cart"], n).tolist()
+    product_ids = rng.integers(0, 50, n).tolist()
+    prices = [round(float(p), 2) for p in rng.uniform(1.0, 100.0, n)]
+    quantities = rng.integers(1, 5, n).tolist()
+    regions = rng.choice(["north", "south", "east"], n).tolist()
+    rows = [
+        (
+            int(i),
+            user_ids[i],
+            base + timedelta(hours=i),
+            event_types[i],
+            product_ids[i],
+            prices[i],
+            quantities[i],
+            regions[i],
+            None,  # discount
+        )
+        for i in range(n)
+    ]
     path = str(tmp_path / "silver" / "events")
-    spark.createDataFrame(df_pd).write.format("delta").mode("overwrite").save(
-        path
-    )
+    spark.createDataFrame(rows, _SILVER_SCHEMA).write.format("delta").mode(
+        "overwrite"
+    ).save(path)
     return path
 
 

@@ -39,3 +39,10 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:distutils",
+    "ignore::DeprecationWarning:pyspark",
+    "ignore::pandas.errors.PerformanceWarning",
+    "ignore:is_datetime64tz_dtype is deprecated:FutureWarning:pandas",
+    "ignore:distutils Version classes are deprecated:DeprecationWarning",
+]
